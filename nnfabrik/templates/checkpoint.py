@@ -157,6 +157,6 @@ class TrainedModelChkptBase(TrainedModelBase):
         if not trainer_config.get("keep_checkpoints"):
             safe_mode = dj.config["safemode"]
             dj.config["safemode"] = False
-            (self.checkpoint_table & orig_key).delete(verbose=False)
+            (self.checkpoint_table & orig_key).delete(safemode=False)
             print("Deleting intermediate checkpoints...")
             dj.config["safemode"] = safe_mode
