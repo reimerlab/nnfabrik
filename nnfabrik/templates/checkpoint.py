@@ -131,7 +131,7 @@ class TrainedModelChkptBase(TrainedModelBase):
         # delete the others
         safe_mode = dj.config["safemode"]
         dj.config["safemode"] = False
-        ((self.checkpoint_table & uid) - keep_checkpoints).delete(verbose=False)
+        ((self.checkpoint_table & uid) - keep_checkpoints).delete(safemode=False)
         dj.config["safemode"] = safe_mode
 
     def add_to_table(self, epoch, model, score, state, uid):

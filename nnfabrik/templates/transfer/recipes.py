@@ -140,18 +140,20 @@ class TrainerDatasetTransferRecipe(TrainerTransferRecipe):
         )
 
 
-@schema
-class TrainedModelTransferRecipe(Recipe):
-    definition = """
-     transfer_step: int
-     data_transfer: bool
-     -> Trainer
-     -> Trainer.proj(prev_trainer_fn='trainer_fn', prev_trainer_hash='trainer_hash')
-     -> Dataset
-     -> Dataset.proj(prev_dataset_fn='dataset_fn', prev_dataset_hash='dataset_hash')
-     -> Model
-     -> Model.proj(prev_model_fn='model_fn', prev_model_hash='model_hash')
-     -> Seed
-     -> Seed.proj(prev_seed='seed')
-     prev_collapsed_history:    varchar(64)
-     """
+## TODO:
+# OperationalError: (1070, 'Too many key parts specified; max 16 parts allowed')
+# @schema
+# class TrainedModelTransferRecipe(Recipe):
+#     definition = """
+#      transfer_step: int
+#      data_transfer: bool
+#      -> Trainer
+#      -> Trainer.proj(prev_trainer_fn='trainer_fn', prev_trainer_hash='trainer_hash')
+#      -> Dataset
+#      -> Dataset.proj(prev_dataset_fn='dataset_fn', prev_dataset_hash='dataset_hash')
+#      -> Model
+#      -> Model.proj(prev_model_fn='model_fn', prev_model_hash='model_hash')
+#      -> Seed
+#      -> Seed.proj(prev_seed='seed')
+#      prev_collapsed_history:    varchar(64)
+#      """

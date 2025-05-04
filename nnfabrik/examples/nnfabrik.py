@@ -1,7 +1,7 @@
 # importing the tables here is a trick to get IntelliSense to work
 from nnfabrik.main import Fabrikant, Trainer, Dataset, Model, Seed, my_nnfabrik
 from nnfabrik.templates.transfer.recipes import (
-    TrainedModelTransferRecipe,
+    # TrainedModelTransferRecipe,
     DatasetTransferRecipe,
     ModelTransferRecipe,
     TrainerTransferRecipe,
@@ -14,7 +14,7 @@ my_nnfabrik(
     "nnfabrik_example",
     context=locals(),
     additional_tables=(
-        TrainedModelTransferRecipe,
+        # TrainedModelTransferRecipe,
         DatasetTransferRecipe,
         ModelTransferRecipe,
         TrainerTransferRecipe,

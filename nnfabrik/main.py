@@ -431,7 +431,7 @@ class Trainer(dj.Manual):
 @schema
 class Seed(dj.Manual):
     definition = """
-    seed:   int     # Random seed that is passed to the model- and dataset-builder
+    seed:   bigint     # Random seed that is passed to the model- and dataset-builder
     """
 
 
