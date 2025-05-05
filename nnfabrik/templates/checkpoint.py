@@ -91,7 +91,12 @@ class TrainedModelChkptBase(TrainedModelBase):
             # restore the training state
             state["epoch"] = checkpoint["epoch"]
             state["score"] = checkpoint["score"]
-            loaded_state = torch.load(checkpoint["state"])
+            """"
+            (1) In PyTorch 2.6, we changed the default value of the `weights_only` argument in `torch.load` from `False` to `True`.
+            Re-running `torch.load` with `weights_only` set to `False` will likely succeed, 
+            but it can result in arbitrary code execution. Do it only if you got the file from a trusted source.
+            """
+            loaded_state = torch.load(checkpoint["state"], weights_only=False)
         for key, state_entry in loaded_state.items():
             if key in state and hasattr(state[key], "load_state_dict"):
                 state[key].load_state_dict(state_entry)
