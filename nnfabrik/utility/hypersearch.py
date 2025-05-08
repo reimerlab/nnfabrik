@@ -1,11 +1,250 @@
 import numpy as np
 from scipy.stats import loguniform
-from ax.service.managed_loop import optimize
 from .nnf_helper import split_module_name, dynamic_import
 from nnfabrik.main import *
 import datajoint as dj
+import optuna
+from optuna.trial import TrialState
+
+class nnfabrikOptuna:
+    """
+    A hyperparameter optimization tool based on Optuna (https://optuna.org/) integrated with nnfabrik.
+    This tool, iteratively, optimizes for hyperparameters that improve a specific score representing
+    model performance (the same score used in TrainedModel table). In every iteration (after every training),
+    it automatically adds an entry to the corresponding tables, and populated the trained model table (i.e.
+    trains the model) for that specific entry.
+
+    Args:
+        optuna_study_config (dict): dictionary of arguments for optuna study: 
+            storage: str | storages.BaseStorage | None = None,
+            sampler: "samplers.BaseSampler" | None = None,
+            pruner: pruners.BasePruner | None = None,
+            study_name: str | None = None,
+            direction: str | StudyDirection | None = None,
+            load_if_exists: bool = False,
+            directions: Sequence[str | StudyDirection] | None = None,
+
+        optuna_optimization_config (dict): dictionary of arguments for optuna optimization:
+            func: ObjectiveFuncType,
+            n_trials: int | None = None,
+            timeout: float | None = None,
+            n_jobs: int = 1,
+            catch: Iterable[type[Exception]] | type[Exception] = (),
+            callbacks: Iterable[Callable[[Study, FrozenTrial], None]] | None = None,
+            gc_after_trial: bool = False,
+            show_progress_bar: bool = False,
+        
+        dataset_fn (str): name of the dataset function
+        dataset_config (dict): dictionary of arguments for dataset function that are fixed
+        dataset_config_auto (dict): dictionary of arguments for dataset function that are to be optimized
+        set it to {} if no arguments are to be optimized
+
+        model_fn (str): name of the model function
+        model_config (dict): dictionary of arguments for model function that are fixed
+        model_config_auto (dict): dictionary of arguments for model function that are to be optimized
+            example format:
+            model_config_auto = {
+                    "hidden_channels": trial.suggest_int("hidden_channels", 2, 4),
+                    "GNN_model": trial.suggest_categorical("GNN_model", ['GCNConv', 'GraphConv', 'ChebConv',
+                     'TAGConv', 'SGConv', 'SSGConv', 'MFConv']),
+                    "ChebConv_k": trial.suggest_int("k", 1, 5),
+                    "SSGConv_k": trial.suggest_int("k", 0, 1),
+                }
+
+        trainer_fn (str): name of the trainer function
+        trainer_config (dict): dictionary of arguments for trainer function that are fixed
+        trainer_config_auto (dict): dictionary of arguments for trainer function that are to be optimized
+            example format:
+            trainer_config_auto = {
+                    "batch_size": trial.suggest_int("batch_size", 16, 128),
+                    "lr": trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True),
+                    "weight_decay": trial.suggest_float("weight_decay", 0.00001,  0.0001, log = True),
+                    "optimizer": trial.suggest_categorical("optimizer", ["adam", "sgd"]),
+                }
+
+        architect (str): Name of the contributor that added this entry
+        trained_model_table (str): name (importable) of the trained_model_table
+        comment (str, optional): Comments about this optimization round. It will be used to fill up the comment entry of dataset, model, and trainer table. Defaults to "Bayesian optimization of Hyper params.".
+    """
+
+    def __init__(
+        self,
+        optuna_study_config, # optuna study related configurations
+        optuna_optimization_config, # optuna optimization related configurations
+        dataset_fn,
+        dataset_config, # dictionary of fixed arguments for dataset function
+        dataset_config_tune, # dictionary of arguments for dataset function that are to be optimized
+        model_fn,
+        model_config,
+        model_config_tune,
+        trainer_fn,
+        trainer_config,
+        trainer_config_tune,
+        architect,
+        trained_model_table,
+        comment="Optimization of Hyper params using Optuna in nnfabrik.",
+        
+    ):
+        self.optuna_study_config = optuna_study_config
+        self.optuna_optimization_config = optuna_optimization_config
+        self.fns = dict(dataset=dataset_fn, model=model_fn, trainer=trainer_fn)
+        self.dataset_config = dataset_config
+        self.model_config = model_config
+        self.trainer_config = trainer_config
+        self.dataset_config_tune = dataset_config_tune
+        self.model_config_tune = model_config_tune
+        self.trainer_config_tune = trainer_config_tune
+        self.architect = architect
+        self.comment = comment
+
+        # import TrainedModel definition
+        module_path, class_name = split_module_name(trained_model_table)
+        self.trained_model_table = dynamic_import(module_path, class_name)
 
 
+    def optuna_params_eval(self, trial: optuna.Trial, param_specs: dict) -> dict:
+        params = {}
+        for key, spec in param_specs.items():
+            condition = spec.get("condition", lambda p: True)
+            if not condition(params):
+                continue  # skip conditional param
+            method = spec["method"]
+            args = spec["args"]
+            default = spec.get("default")
+
+            try:
+                suggest_func = getattr(trial, method)
+                params[key] = suggest_func(**args)
+            except Exception as e:
+                if default is not None:
+                    params[key] = default
+                else:
+                    raise RuntimeError(f"Failed to evaluate {key}: {e}")
+        return params
+
+
+    def make_new_config(self, trial: optuna.Trial, fix_config: dict, tune_config: dict) -> (dict, str):
+        """
+        For each trial, generate  a new configuration by combining the fixed and tunable configurations.
+        Args:
+            trial: optuna trial object
+            fix_config: fixed configuration
+            tune_config: tunable configuration
+        Returns:
+            config: configuration
+            config_hash: hash of the configuration
+        """
+        
+        config = fix_config.copy()
+        config_tune = self.optuna_params_eval(trial, tune_config)
+        config.update(config_tune)
+        config_hash = make_hash(config)
+        return (config, config_hash)
+
+    def make_nnfabric_spec(self, trial: optuna.Trial):
+        """
+        For a given set of parameters, add an entry to the corresponding tables, and populate the trained model
+        table for that specific entry.
+
+        Args:
+            trial:
+
+        Returns:
+            dict:
+        """
+        # Uset this to add other useful information in trial: set_user_attribute
+        # https://github.com/optuna/optuna/blob/022f97dbcb9be635ba2987662a33f684ad9811f0/optuna/trial/_trial.py#L537
+        dataset_config, dataset_hash = self.make_new_config(trial, self.dataset_config, self.dataset_config_tune)
+        trial.set_user_attr("dataset_hash", dataset_hash)
+        entry_exists = {
+            "dataset_fn": "{}".format(self.fns["dataset"])
+        } in self.trained_model_table().dataset_table() and {
+            "dataset_hash": "{}".format(dataset_hash)
+        } in self.trained_model_table().dataset_table()
+        if not entry_exists:
+            self.trained_model_table().dataset_table().add_entry(
+                self.fns["dataset"],
+                dataset_config,
+                dataset_fabrikant=self.architect,
+                dataset_comment=self.comment,
+            )
+
+        model_config, model_hash = self.make_new_config(trial, self.model_config, self.model_config_tune)
+        trial.set_user_attr("model_hash", model_hash)
+        entry_exists = {"model_fn": "{}".format(self.fns["model"])} in self.trained_model_table().model_table() and {
+            "model_hash": "{}".format(model_hash)
+        } in self.trained_model_table().model_table()
+        if not entry_exists:
+            self.trained_model_table().model_table().add_entry(
+                self.fns["model"],
+                model_config,
+                model_fabrikant=self.architect,
+                model_comment=self.comment,
+            )
+
+        trainer_config, trainer_hash = self.make_new_config(trial, self.trainer_config, self.trainer_config_tune)
+        trial.set_user_attr("trainer_hash", trainer_hash)
+        entry_exists = {
+            "trainer_fn": "{}".format(self.fns["trainer"])
+        } in self.trained_model_table().trainer_table() and {
+            "trainer_hash": "{}".format(trainer_hash)
+        } in self.trained_model_table().trainer_table()
+        if not entry_exists:
+            self.trained_model_table().trainer_table().add_entry(
+                self.fns["trainer"],
+                trainer_config,
+                trainer_fabrikant=self.architect,
+                trainer_comment=self.comment,
+            )
+
+        # get the primary key values for all those entries
+        restriction = (
+            'dataset_fn in ("{}")'.format(self.fns["dataset"]),
+            'dataset_hash in ("{}")'.format(dataset_hash),
+            'model_fn in ("{}")'.format(self.fns["model"]),
+            'model_hash in ("{}")'.format(model_hash),
+            'trainer_fn in ("{}")'.format(self.fns["trainer"]),
+            'trainer_hash in ("{}")'.format(trainer_hash),
+        )
+        return restriction
+
+    def objective(self, trial: optuna.Trial) -> float:
+        """
+        Objective function to be optimized by Optuna.
+        returns:
+            metric that is to be optimized
+        """
+        nnfabric_spec = self.make_nnfabric_spec(trial)
+        # populate the table for those primary keys
+        self.trained_model_table().populate(*nnfabric_spec)      
+        score = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch("score")[0]
+        return score
+
+    def run(self, report=True):
+        """
+        Runs an Optuna study
+        returns:
+            study: optuna.study.Study: The study object containing the optimization results.
+        """
+        study = optuna.create_study(**self.optuna_study_config)
+        study.optimize(self.objective, **self.optuna_optimization_config)
+        pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+        complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+
+        print("Study statistics: ")
+        print("  Number of finished trials: ", len(study.trials))
+        print("  Number of pruned trials: ", len(pruned_trials))
+        print("  Number of complete trials: ", len(complete_trials))
+        print("Best trial:")
+        best_trial = study.best_trial
+
+        print("  Best score: ", best_trial.value)
+        print("  Params: ")
+        for key, value in best_trial.params.items():
+            print("    {}: {}".format(key, value))
+        self.study = study
+        return study, best_trial
+        
 class Bayesian:
     """
     A hyperparameter optimization tool based on Facebook Ax (https://ax.dev/), integrated with nnfabrik.
