@@ -264,7 +264,30 @@ class TrainedModelBase(dj.Computed):
 
             self.ModelStorage.insert1(key, ignore_extra_fields=True)
 
-
+class TrainedOptunaModelBase(TrainedModelBase):
+    """  inherit from TrainedModelBase to create a table for storing optuna trials """
+   
+    @property
+    def definition(self):
+        definition = """
+        # {table_comment}
+        -> self().model_table
+        -> self().dataset_table
+        -> self().trainer_table
+        -> self().seed_table
+        ---
+        comment='':                        varchar(768) # short description 
+        score:                             float        # loss
+        output:                            longblob     # trainer object's output
+        ->[nullable] self().user_table
+        optuna_trial_number=Null:              int          # optuna trial id
+        optuna_trial_state=Null:           varchar(32)  # optuna trial state
+        trainedmodel_ts=CURRENT_TIMESTAMP: timestamp    # UTZ timestamp at time of insertion
+        """.format(
+            table_comment=self.table_comment
+        )
+        return definition
+        
 class DataInfoBase(dj.Computed):
     """
     Inherit from this class and decorate with your own schema to create a functional

@@ -2,7 +2,15 @@ from importlib import import_module
 import numpy as np
 from ..utility.dj_helpers import make_hash, cleanup_numpy_scalar
 
-
+def config_to_str(cfg):
+    ''' concatenate dict items to string
+    '''
+    _str = ''
+    for k in cfg:
+        _str +=k+'.'+str(cfg[k])
+        _str+='-'
+    return _str[:-1]
+    
 def split_module_name(abs_class_name):
     abs_module_path = ".".join(abs_class_name.split(".")[:-1])
     class_name = abs_class_name.split(".")[-1]
