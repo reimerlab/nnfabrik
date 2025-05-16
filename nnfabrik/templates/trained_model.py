@@ -7,7 +7,7 @@ from datajoint.fetch import DataJointError
 from ..builder import get_all_parts, get_model, get_trainer, resolve_fn
 from ..utility.dj_helpers import make_hash
 from .utility import find_object
-
+import gc
 
 class TrainedModelBase(dj.Computed):
     """
@@ -263,7 +263,41 @@ class TrainedModelBase(dj.Computed):
             key["model_state"] = filepath
 
             self.ModelStorage.insert1(key, ignore_extra_fields=True)
+            print('Model saved in external storeage')
 
+        del dataloaders
+        del model
+        del trainer
+        del model_state
+        del score
+        del output
+        # clear GPU memory
+        torch.cuda.empty_cache()
+        gc.collect()
+        print('----------training finished. Cleaned up resources ---------------')
+class TrainedOptunaModelBase(TrainedModelBase):
+    """  inherit from TrainedModelBase to create a table for storing optuna trials """
+   
+    @property
+    def definition(self):
+        definition = """
+        # {table_comment}
+        -> self().model_table
+        -> self().dataset_table
+        -> self().trainer_table
+        -> self().seed_table
+        ---
+        comment='':                        varchar(768) # short description 
+        score:                             float        # loss
+        output:                            longblob     # trainer object's output
+        ->[nullable] self().user_table
+        optuna_trial_number=Null:              int          # optuna trial id
+        optuna_trial_state=Null:           varchar(32)  # optuna trial state
+        trainedmodel_ts=CURRENT_TIMESTAMP: timestamp    # UTZ timestamp at time of insertion
+        """.format(
+            table_comment=self.table_comment
+        )
+        return definition
 
 class DataInfoBase(dj.Computed):
     """

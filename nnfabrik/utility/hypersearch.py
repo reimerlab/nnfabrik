@@ -1,11 +1,11 @@
 import numpy as np
 from scipy.stats import loguniform
-from .nnf_helper import split_module_name, dynamic_import
+from .nnf_helper import split_module_name, dynamic_import, config_to_str
 from nnfabrik.main import *
 import datajoint as dj
 import optuna
 from optuna.trial import TrialState
-
+import gc
 class nnfabrikOptuna:
     """
     A hyperparameter optimization tool based on Optuna (https://optuna.org/) integrated with nnfabrik.
@@ -85,8 +85,8 @@ class nnfabrikOptuna:
         comment="Optimization of Hyper params using Optuna in nnfabrik.",
         
     ):
-        self.optuna_study_config = optuna_study_config
-        self.optuna_optimization_config = optuna_optimization_config
+        self.optuna_study_config = optuna_study_config ## TODO: save those info in trained_model table?
+        self.optuna_optimization_config = optuna_optimization_config ## TODO: save those info in trained_model table?
         self.fns = dict(dataset=dataset_fn, model=model_fn, trainer=trainer_fn)
         self.dataset_config = dataset_config
         self.model_config = model_config
@@ -139,7 +139,8 @@ class nnfabrikOptuna:
         config_tune = self.optuna_params_eval(trial, tune_config)
         config.update(config_tune)
         config_hash = make_hash(config)
-        return (config, config_hash)
+        config_tune_str = config_to_str(config_tune)
+        return (config, config_hash, config_tune_str)
 
     def make_nnfabric_spec(self, trial: optuna.Trial):
         """
@@ -152,10 +153,8 @@ class nnfabrikOptuna:
         Returns:
             dict:
         """
-        # Uset this to add other useful information in trial: set_user_attribute
-        # https://github.com/optuna/optuna/blob/022f97dbcb9be635ba2987662a33f684ad9811f0/optuna/trial/_trial.py#L537
-        dataset_config, dataset_hash = self.make_new_config(trial, self.dataset_config, self.dataset_config_tune)
-        trial.set_user_attr("dataset_hash", dataset_hash)
+        dataset_config, dataset_hash, dataset_cmt = self.make_new_config(trial, self.dataset_config, self.dataset_config_tune)
+        # trial.set_user_attr("dataset_hash", dataset_hash)
         entry_exists = {
             "dataset_fn": "{}".format(self.fns["dataset"])
         } in self.trained_model_table().dataset_table() and {
@@ -166,11 +165,11 @@ class nnfabrikOptuna:
                 self.fns["dataset"],
                 dataset_config,
                 dataset_fabrikant=self.architect,
-                dataset_comment=self.comment,
+                dataset_comment=dataset_cmt,
             )
 
-        model_config, model_hash = self.make_new_config(trial, self.model_config, self.model_config_tune)
-        trial.set_user_attr("model_hash", model_hash)
+        model_config, model_hash, model_cmt = self.make_new_config(trial, self.model_config, self.model_config_tune)
+        # trial.set_user_attr("model_hash", model_hash)
         entry_exists = {"model_fn": "{}".format(self.fns["model"])} in self.trained_model_table().model_table() and {
             "model_hash": "{}".format(model_hash)
         } in self.trained_model_table().model_table()
@@ -179,11 +178,11 @@ class nnfabrikOptuna:
                 self.fns["model"],
                 model_config,
                 model_fabrikant=self.architect,
-                model_comment=self.comment,
+                model_comment=model_cmt,
             )
 
-        trainer_config, trainer_hash = self.make_new_config(trial, self.trainer_config, self.trainer_config_tune)
-        trial.set_user_attr("trainer_hash", trainer_hash)
+        trainer_config, trainer_hash, trainer_cmt = self.make_new_config(trial, self.trainer_config, self.trainer_config_tune)
+        # trial.set_user_attr("trainer_hash", trainer_hash)
         entry_exists = {
             "trainer_fn": "{}".format(self.fns["trainer"])
         } in self.trained_model_table().trainer_table() and {
@@ -194,7 +193,7 @@ class nnfabrikOptuna:
                 self.fns["trainer"],
                 trainer_config,
                 trainer_fabrikant=self.architect,
-                trainer_comment=self.comment,
+                trainer_comment=trainer_cmt,
             )
 
         # get the primary key values for all those entries
@@ -206,6 +205,7 @@ class nnfabrikOptuna:
             'trainer_fn in ("{}")'.format(self.fns["trainer"]),
             'trainer_hash in ("{}")'.format(trainer_hash),
         )
+        trial.set_user_attr("trial_restriction", restriction)
         return restriction
 
     def objective(self, trial: optuna.Trial) -> float:
@@ -216,9 +216,22 @@ class nnfabrikOptuna:
         """
         nnfabric_spec = self.make_nnfabric_spec(trial)
         # populate the table for those primary keys
-        self.trained_model_table().populate(*nnfabric_spec)      
+        self.trained_model_table().populate(*nnfabric_spec)
+        # update trial information. optuna_trial_number       
         score = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch("score")[0]
         return score
+
+    # def populate_optuna_trial_info(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
+    #     ''' update trial information with call back'''
+    #     ...
+    #     tuna_trial_info = dict(optuna_trial_number = trial.number, optuna_trial_state = str(trial.state))
+    #     nnfabric_spec = trial.user_attrs["trial_restriction"]  
+    #     key = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch1("KEY")         
+    #     update_data = {**key, **tuna_trial_info}
+    #     self.trained_model_table().update1(update_data)
+    #     del update_data
+    #     gc.collect()
+    #     print('------------ Trial finished and GC performed!-----------')
 
     def run(self, report=True):
         """
@@ -227,24 +240,25 @@ class nnfabrikOptuna:
             study: optuna.study.Study: The study object containing the optimization results.
         """
         study = optuna.create_study(**self.optuna_study_config)
-        study.optimize(self.objective, **self.optuna_optimization_config)
-        pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
-        complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+        study.optimize(self.objective, **self.optuna_optimization_config)#, callbacks=[self.populate_optuna_trial_info])
+        if report:
+            pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+            complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
 
-        print("Study statistics: ")
-        print("  Number of finished trials: ", len(study.trials))
-        print("  Number of pruned trials: ", len(pruned_trials))
-        print("  Number of complete trials: ", len(complete_trials))
-        print("Best trial:")
-        best_trial = study.best_trial
+            print("Study statistics: ")
+            print("  Number of finished trials: ", len(study.trials))
+            print("  Number of pruned trials: ", len(pruned_trials))
+            print("  Number of complete trials: ", len(complete_trials))
+            print("Best trial:")
+            best_trial = study.best_trial
 
-        print("  Best score: ", best_trial.value)
-        print("  Params: ")
-        for key, value in best_trial.params.items():
-            print("    {}: {}".format(key, value))
+            print("  Best score: ", best_trial.value)
+            print("  Params: ")
+            for key, value in best_trial.params.items():
+                print("    {}: {}".format(key, value))
         self.study = study
         return study, best_trial
-        
+
 class Bayesian:
     """
     A hyperparameter optimization tool based on Facebook Ax (https://ax.dev/), integrated with nnfabrik.
