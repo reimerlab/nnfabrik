@@ -50,7 +50,7 @@ def create_new_nnfabrik_schema(model_schema_name, external_location):
     dj.config['nnfabrik.schema_name'] = model_schema_name
     if model_schema_name in dj.list_schemas():
         print(f'Schmea: {model_schema_name} already exist in Database: {dj_host}!')
-        return dj.schema(model_schema_name)
+        schema  = dj.schema(model_schema_name)
     else:
         from nnfabrik.main import my_nnfabrik
         from nnfabrik.templates.trained_model import TrainedOptunaModelBase #TrainedModelBase
@@ -68,7 +68,7 @@ def create_new_nnfabrik_schema(model_schema_name, external_location):
             nnfabrik = nnfabrik_module
         
         print(f'Schmea: {model_schema_name} is created in Database: {dj_host}!')
-    return schema
+    return schema, DB_user_name
     
     ## model with checkpoint
     # from nnfabrik.templates.checkpoint import TrainedModelChkptBase, my_checkpoint
