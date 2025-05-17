@@ -26,49 +26,60 @@ except:
 
 
 
-def create_new_nnfabrik_schema(model_schema_name, external_location):
+def create_new_nnfabrik_module(model_schema_name, external_store_dict, 
+                              fabrikant_name='', email_addr='', affiliation=''):
     ''' 
     model_schema_name: name of schema (example: nnfabrik_gps_optuna)
-    external_location: where to save model state dictionary
+    external_store_dict: configuration for external
+    return:
+    nnfabrik_module: Python class for thise module (for autopopulate and other class function)
+    fabrikant name: str
     '''
-    assert os.path.exists(external_location), f"Path: {path} does not exist. Check the path name or create the folder"
     dj.config['enable_python_native_blobs'] = True
     if not "stores" in dj.config:
         dj.config["stores"] = {}
 
     dj.config['database.host'] = os.environ['DJ_HOST']
     dj.config['database.user'] = os.environ['DJ_USER']
-    dj.config['database.password'] = os.environ['DJ_PASS']  
-    dj.config["stores"]["minio"] = {  # store in local folder
-            "protocol": "file",
-            "location": external_location #"/mnt/jr-scratch02/Ming/neurd/trainedModels_gnn/"
-    }
+    dj.config['database.password'] = os.environ['DJ_PASS']
+    if external_store_dict['protocol']=='file':
+        ext_path = external_store_dict['location']
+        print(f'Using local store at {ext_path}')
+        assert os.path.exists(ext_path), 'external location does not exist. Please create the folder and retry'
+    else:
+        print(f"Using {external_store_dict['protocol']} protocal for external")
+        print('Please make sure access to the store is availabe')
+    
+    dj.config["stores"]["minio"] = external_store_dict
     dj_host = dj.config['database.host']
     DB_user_name = dj.config['database.user'] # when creating schmeas in database where user only have privilege to create {DB_user_name}_ prefix table
     schema_prefix = f'{DB_user_name}_'
     model_schema_name = schema_prefix + model_schema_name
     dj.config['nnfabrik.schema_name'] = model_schema_name
-    if model_schema_name in dj.list_schemas():
-        print(f'Schmea: {model_schema_name} already exist in Database: {dj_host}!')
-        schema  = dj.schema(model_schema_name)
-    else:
-        from nnfabrik.main import my_nnfabrik
-        from nnfabrik.templates.trained_model import TrainedOptunaModelBase #TrainedModelBase
-        
-        nnfabrik_module = my_nnfabrik(
-            model_schema_name,
-            context = None,
-            use_common_fabrikant = False
-        )
-      
-        schema = dj.Schema(model_schema_name)
-        @schema
-        class TrainedModel(TrainedOptunaModelBase):
-            table_comment = 'nnfabrik with Optuna trial inforamtion'
-            nnfabrik = nnfabrik_module
-        
-        print(f'Schmea: {model_schema_name} is created in Database: {dj_host}!')
-    return schema, DB_user_name
+
+    from nnfabrik.main import my_nnfabrik
+    from nnfabrik.templates.trained_model import TrainedOptunaModelBase #TrainedModelBase
+    
+    nnfabrik_module = my_nnfabrik(
+        model_schema_name,
+        context = None,
+        use_common_fabrikant = False
+    )
+  
+    schema = dj.Schema(model_schema_name)
+    @schema
+    class TrainedModel(TrainedOptunaModelBase):
+        table_comment = 'nnfabrik with Optuna trial inforamtion'
+        nnfabrik = nnfabrik_module
+    nnfabrik_module.TrainedModel = TrainedModel
+    print(f'Schmea: {model_schema_name} is created in Database: {dj_host}!')
+    
+    if fabrikant_name=='':
+        fabrikant_name = DB_user_name  
+    fabrikant_info = dict(fabrikant_name=fabrikant_name, email=email_addr, affiliation=affiliation, dj_username=DB_user_name)
+    nnfabrik_module.Fabrikant().insert1(fabrikant_info, skip_duplicates=True)
+
+    return nnfabrik_module, fabrikant_name
     
     ## model with checkpoint
     # from nnfabrik.templates.checkpoint import TrainedModelChkptBase, my_checkpoint

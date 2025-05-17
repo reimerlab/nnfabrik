@@ -271,7 +271,8 @@ class TrainedModelBase(dj.Computed):
         del score
         del output
         # clear GPU memory
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         gc.collect()
         print('----------training finished. Cleaned up resources ---------------')
         

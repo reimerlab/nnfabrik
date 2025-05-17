@@ -1,11 +1,13 @@
 import numpy as np
 from scipy.stats import loguniform
 from .nnf_helper import split_module_name, dynamic_import, config_to_str
-from nnfabrik.main import *
+from .dj_helpers import make_hash
+# from nnfabrik.main import * # avoid nnfabrik_core
 import datajoint as dj
 import optuna
 from optuna.trial import TrialState
 import gc
+
 class nnfabrikOptuna:
     """
     A hyperparameter optimization tool based on Optuna (https://optuna.org/) integrated with nnfabrik.
@@ -63,7 +65,7 @@ class nnfabrikOptuna:
                 }
 
         architect (str): Name of the contributor that added this entry
-        trained_model_table (str): name (importable) of the trained_model_table
+        nn_module: python classes for current schema. this would have necessary make functions for doing autopoluate
         comment (str, optional): Comments about this optimization round. It will be used to fill up the comment entry of dataset, model, and trainer table. Defaults to "Bayesian optimization of Hyper params.".
     """
 
@@ -81,7 +83,7 @@ class nnfabrikOptuna:
         trainer_config,
         trainer_config_tune,
         architect,
-        trained_model_table,
+        nn_module,
         comment="Optimization of Hyper params using Optuna in nnfabrik.",
         
     ):
@@ -96,11 +98,10 @@ class nnfabrikOptuna:
         self.trainer_config_tune = trainer_config_tune
         self.architect = architect
         self.comment = comment
-
-        # import TrainedModel definition
-        module_path, class_name = split_module_name(trained_model_table)
-        self.trained_model_table = dynamic_import(module_path, class_name)
-
+        self.data_set_table = nn_module.Dataset()
+        self.trainer_table = nn_module.Trainer()
+        self.model_table = nn_module.Model()
+        self.trained_model_table = nn_module.TrainedModel
 
     def optuna_params_eval(self, trial: optuna.Trial, param_specs: dict) -> dict:
         params = {}
@@ -142,6 +143,22 @@ class nnfabrikOptuna:
         config_tune_str = config_to_str(config_tune)
         return (config, config_hash, config_tune_str)
 
+    def insert_new_entry(self, trial: optuna.Trial, table_name: str,  _config: dict, _config_tune: dict):
+        ''' helper function to insert a new entry to one of the tables with giving configs
+        return:
+            hash for the primary key
+        '''
+        assert table_name in ['dataset', 'model', 'trainer'], 'invalid table name'
+        table_dict = dict(dataset=self.data_set_table, model=self.model_table,trainer=self.trainer_table)
+        dj_table = table_dict[table_name]
+        config_, hash_, cmt_ = self.make_new_config(trial, _config, _config_tune)
+        query_dict = {f'{table_name}_fn':self.fns[table_name], f'{table_name}_hash': hash_}      
+        if not (query_dict in dj_table):
+            insert_dict = {**query_dict, f'{table_name}_config':config_, \
+                           f'{table_name}_fabrikant': self.architect, f'{table_name}_comment': cmt_}
+            dj_table.insert1(insert_dict, skip_duplicates=True) # add_entry
+        return hash_
+        ...
     def make_nnfabric_spec(self, trial: optuna.Trial):
         """
         For a given set of parameters, add an entry to the corresponding tables, and populate the trained model
@@ -153,49 +170,9 @@ class nnfabrikOptuna:
         Returns:
             dict:
         """
-        dataset_config, dataset_hash, dataset_cmt = self.make_new_config(trial, self.dataset_config, self.dataset_config_tune)
-        # trial.set_user_attr("dataset_hash", dataset_hash)
-        entry_exists = {
-            "dataset_fn": "{}".format(self.fns["dataset"])
-        } in self.trained_model_table().dataset_table() and {
-            "dataset_hash": "{}".format(dataset_hash)
-        } in self.trained_model_table().dataset_table()
-        if not entry_exists:
-            self.trained_model_table().dataset_table().add_entry(
-                self.fns["dataset"],
-                dataset_config,
-                dataset_fabrikant=self.architect,
-                dataset_comment=dataset_cmt,
-            )
-
-        model_config, model_hash, model_cmt = self.make_new_config(trial, self.model_config, self.model_config_tune)
-        # trial.set_user_attr("model_hash", model_hash)
-        entry_exists = {"model_fn": "{}".format(self.fns["model"])} in self.trained_model_table().model_table() and {
-            "model_hash": "{}".format(model_hash)
-        } in self.trained_model_table().model_table()
-        if not entry_exists:
-            self.trained_model_table().model_table().add_entry(
-                self.fns["model"],
-                model_config,
-                model_fabrikant=self.architect,
-                model_comment=model_cmt,
-            )
-
-        trainer_config, trainer_hash, trainer_cmt = self.make_new_config(trial, self.trainer_config, self.trainer_config_tune)
-        # trial.set_user_attr("trainer_hash", trainer_hash)
-        entry_exists = {
-            "trainer_fn": "{}".format(self.fns["trainer"])
-        } in self.trained_model_table().trainer_table() and {
-            "trainer_hash": "{}".format(trainer_hash)
-        } in self.trained_model_table().trainer_table()
-        if not entry_exists:
-            self.trained_model_table().trainer_table().add_entry(
-                self.fns["trainer"],
-                trainer_config,
-                trainer_fabrikant=self.architect,
-                trainer_comment=trainer_cmt,
-            )
-
+        dataset_hash = self.insert_new_entry(trial, 'dataset', self.dataset_config, self.dataset_config_tune)
+        model_hash = self.insert_new_entry(trial, 'model', self.model_config, self.model_config_tune)
+        trainer_hash = self.insert_new_entry(trial, 'trainer', self.trainer_config, self.trainer_config_tune)
         # get the primary key values for all those entries
         restriction = (
             'dataset_fn in ("{}")'.format(self.fns["dataset"]),
@@ -212,13 +189,13 @@ class nnfabrikOptuna:
         """
         Objective function to be optimized by Optuna.
         returns:
-            A single metric or a tuple of two metrics to be optimized.
+            Metric(s) to be optimized.
         """
         nnfabric_spec = self.make_nnfabric_spec(trial)
         # populate the table for those primary keys
-        self.trained_model_table().populate(*nnfabric_spec)
+        self.trained_model_table.populate(*nnfabric_spec)
         # fetch scores
-        scores = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch("scores")
+        scores = (self.trained_model_table & dj.AndList(nnfabric_spec)).fetch("scores")
         if len(scores) == 1:
             return scores[0]
         elif len(scores) == 2:
@@ -231,9 +208,9 @@ class nnfabrikOptuna:
         ...
         tuna_trial_info = dict(optuna_trial_number = trial.number, optuna_trial_state = str(trial.state))
         nnfabric_spec = trial.user_attrs["trial_restriction"]  
-        key = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch1("KEY")         
+        key = (self.trained_model_table & dj.AndList(nnfabric_spec)).fetch1("KEY")         
         update_data = {**key, **tuna_trial_info}
-        self.trained_model_table().update1(update_data)
+        self.trained_model_table.update1(update_data)
         del update_data
         gc.collect()
         print('------------ Trial finished and GC performed!-----------')
@@ -250,19 +227,11 @@ class nnfabrikOptuna:
         if report:
             pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
             complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
-
             print("Study statistics: ")
             print("  Number of finished trials: ", len(study.trials))
             print("  Number of pruned trials: ", len(pruned_trials))
             print("  Number of complete trials: ", len(complete_trials))
-            print("Best trial:")
-            best_trial = study.best_trials
-
-            print("  Best score: ", best_trial.value)
-            print("  Params: ")
-            for key, value in best_trial.params.items():
-                print("    {}: {}".format(key, value))
-        return study, best_trial
+        return study
 
 class Bayesian:
     """
