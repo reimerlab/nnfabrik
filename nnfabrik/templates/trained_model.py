@@ -75,7 +75,7 @@ class TrainedModelBase(dj.Computed):
         -> self().seed_table
         ---
         comment='':                        varchar(768) # short description 
-        score:                             float        # loss
+        score:                             float        #  float
         output:                            longblob     # trainer object's output
         ->[nullable] self().user_table
         trainedmodel_ts=CURRENT_TIMESTAMP: timestamp    # UTZ timestamp at time of insertion
@@ -243,14 +243,13 @@ class TrainedModelBase(dj.Computed):
 
         # model training
         score, output, model_state = trainer(model=model, dataloaders=dataloaders, seed=seed, uid=key, cb=call_back)
-
         # save resulting model_state into a temporary file to be attached
         with tempfile.TemporaryDirectory() as temp_dir:
             filename = make_hash(key) + ".pth.tar"
             filepath = os.path.join(temp_dir, filename)
             torch.save(model_state, filepath)
 
-            key["score"] = score
+            key["scores"] = score
             key["output"] = output
             key["fabrikant_name"] = fabrikant_name
             comments = []
@@ -275,6 +274,7 @@ class TrainedModelBase(dj.Computed):
         torch.cuda.empty_cache()
         gc.collect()
         print('----------training finished. Cleaned up resources ---------------')
+        
 class TrainedOptunaModelBase(TrainedModelBase):
     """  inherit from TrainedModelBase to create a table for storing optuna trials """
    
@@ -288,7 +288,7 @@ class TrainedOptunaModelBase(TrainedModelBase):
         -> self().seed_table
         ---
         comment='':                        varchar(768) # short description 
-        score:                             float        # loss
+        scores:                            longblob     # list of loss
         output:                            longblob     # trainer object's output
         ->[nullable] self().user_table
         optuna_trial_number=Null:              int          # optuna trial id

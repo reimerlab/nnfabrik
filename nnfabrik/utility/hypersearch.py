@@ -208,30 +208,35 @@ class nnfabrikOptuna:
         trial.set_user_attr("trial_restriction", restriction)
         return restriction
 
-    def objective(self, trial: optuna.Trial) -> float:
+    def objective(self, trial: optuna.Trial) -> float | tuple:
         """
         Objective function to be optimized by Optuna.
         returns:
-            metric that is to be optimized
+            A single metric or a tuple of two metrics to be optimized.
         """
         nnfabric_spec = self.make_nnfabric_spec(trial)
         # populate the table for those primary keys
         self.trained_model_table().populate(*nnfabric_spec)
-        # update trial information. optuna_trial_number       
-        score = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch("score")[0]
-        return score
+        # fetch scores
+        scores = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch("scores")
+        if len(scores) == 1:
+            return scores[0]
+        elif len(scores) == 2:
+            return tuple(scores)
+        else:
+            raise ValueError("Unexpected number of scores fetched.")
 
-    # def populate_optuna_trial_info(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
-    #     ''' update trial information with call back'''
-    #     ...
-    #     tuna_trial_info = dict(optuna_trial_number = trial.number, optuna_trial_state = str(trial.state))
-    #     nnfabric_spec = trial.user_attrs["trial_restriction"]  
-    #     key = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch1("KEY")         
-    #     update_data = {**key, **tuna_trial_info}
-    #     self.trained_model_table().update1(update_data)
-    #     del update_data
-    #     gc.collect()
-    #     print('------------ Trial finished and GC performed!-----------')
+    def populate_optuna_trial_info(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> None:
+        ''' update trial information with call back'''
+        ...
+        tuna_trial_info = dict(optuna_trial_number = trial.number, optuna_trial_state = str(trial.state))
+        nnfabric_spec = trial.user_attrs["trial_restriction"]  
+        key = (self.trained_model_table() & dj.AndList(nnfabric_spec)).fetch1("KEY")         
+        update_data = {**key, **tuna_trial_info}
+        self.trained_model_table().update1(update_data)
+        del update_data
+        gc.collect()
+        print('------------ Trial finished and GC performed!-----------')
 
     def run(self, report=True):
         """
@@ -240,7 +245,8 @@ class nnfabrikOptuna:
             study: optuna.study.Study: The study object containing the optimization results.
         """
         study = optuna.create_study(**self.optuna_study_config)
-        study.optimize(self.objective, **self.optuna_optimization_config)#, callbacks=[self.populate_optuna_trial_info])
+        study.optimize(self.objective, **self.optuna_optimization_config, callbacks=[self.populate_optuna_trial_info])
+        self.study = study
         if report:
             pruned_trials = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
             complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
@@ -250,13 +256,12 @@ class nnfabrikOptuna:
             print("  Number of pruned trials: ", len(pruned_trials))
             print("  Number of complete trials: ", len(complete_trials))
             print("Best trial:")
-            best_trial = study.best_trial
+            best_trial = study.best_trials
 
             print("  Best score: ", best_trial.value)
             print("  Params: ")
             for key, value in best_trial.params.items():
                 print("    {}: {}".format(key, value))
-        self.study = study
         return study, best_trial
 
 class Bayesian:

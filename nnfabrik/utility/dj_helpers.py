@@ -1,5 +1,5 @@
 # helper functions for use with DataJoint tables
-
+import os
 import warnings
 from datetime import datetime
 import hashlib
@@ -24,6 +24,60 @@ except:
     # for versions >= 0.12.6
     from datajoint.schemas import Schema
 
+
+
+def create_new_nnfabrik_schema(model_schema_name, external_location):
+    ''' 
+    model_schema_name: name of schema (example: nnfabrik_gps_optuna)
+    external_location: where to save model state dictionary
+    '''
+    assert os.path.exists(external_location), f"Path: {path} does not exist. Check the path name or create the folder"
+    dj.config['enable_python_native_blobs'] = True
+    if not "stores" in dj.config:
+        dj.config["stores"] = {}
+
+    dj.config['database.host'] = os.environ['DJ_HOST']
+    dj.config['database.user'] = os.environ['DJ_USER']
+    dj.config['database.password'] = os.environ['DJ_PASS']  
+    dj.config["stores"]["minio"] = {  # store in local folder
+            "protocol": "file",
+            "location": external_location #"/mnt/jr-scratch02/Ming/neurd/trainedModels_gnn/"
+    }
+    dj_host = dj.config['database.host']
+    DB_user_name = dj.config['database.user'] # when creating schmeas in database where user only have privilege to create {DB_user_name}_ prefix table
+    schema_prefix = f'{DB_user_name}_'
+    model_schema_name = schema_prefix + model_schema_name
+    dj.config['nnfabrik.schema_name'] = model_schema_name
+    if model_schema_name in dj.list_schemas():
+        print(f'Schmea: {model_schema_name} already exist in Database: {dj_host}!')
+        return dj.schema(model_schema_name)
+    else:
+        from nnfabrik.main import my_nnfabrik
+        from nnfabrik.templates.trained_model import TrainedOptunaModelBase #TrainedModelBase
+        
+        nnfabrik_module = my_nnfabrik(
+            model_schema_name,
+            context = None,
+            use_common_fabrikant = False
+        )
+      
+        schema = dj.Schema(model_schema_name)
+        @schema
+        class TrainedModel(TrainedOptunaModelBase):
+            table_comment = 'nnfabrik with Optuna trial inforamtion'
+            nnfabrik = nnfabrik_module
+        
+        print(f'Schmea: {model_schema_name} is created in Database: {dj_host}!')
+    return schema
+    
+    ## model with checkpoint
+    # from nnfabrik.templates.checkpoint import TrainedModelChkptBase, my_checkpoint
+    # Checkpoint = my_checkpoint(nnfabrik_module)
+    # @schema
+    # class TrainedModelChkpt(TrainedModelChkptBase):
+    #     table_comment = "GPS trained models with checkpointing"
+    #     nnfabrik = nnfabrik_module
+    #     checkpoint_table = Checkpoint
 
 def clone_conn(conn):
     """
