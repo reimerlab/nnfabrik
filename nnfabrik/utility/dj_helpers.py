@@ -58,19 +58,26 @@ def create_new_nnfabrik_module(model_schema_name, external_store_dict,
     dj.config['nnfabrik.schema_name'] = model_schema_name
 
     from nnfabrik.main import my_nnfabrik
-    from nnfabrik.templates.trained_model import TrainedOptunaModelBase #TrainedModelBase
+    # from nnfabrik.templates.trained_model import TrainedOptunaModelBase
+    from nnfabrik.templates.checkpoint import TrainedOptunaModelChkptBase, my_checkpoint
     
     nnfabrik_module = my_nnfabrik(
         model_schema_name,
         context = None,
         use_common_fabrikant = False
     )
-  
+    Checkpoint = my_checkpoint(nnfabrik_module)
     schema = dj.Schema(model_schema_name)
+    # @schema
+    # class TrainedModel(TrainedOptunaModelBase):
+    #     table_comment = 'nnfabrik with Optuna trial inforamtion'
+    #     nnfabrik = nnfabrik_module
     @schema
-    class TrainedModel(TrainedOptunaModelBase):
-        table_comment = 'nnfabrik with Optuna trial inforamtion'
+    class TrainedModel(TrainedOptunaModelChkptBase):
+        table_comment = "Optuna Trained models with checkpointing"
         nnfabrik = nnfabrik_module
+        checkpoint_table = Checkpoint
+
     nnfabrik_module.TrainedModel = TrainedModel
     print(f'Schmea: {model_schema_name} is created in Database: {dj_host}!')
     
@@ -80,15 +87,6 @@ def create_new_nnfabrik_module(model_schema_name, external_store_dict,
     nnfabrik_module.Fabrikant().insert1(fabrikant_info, skip_duplicates=True)
 
     return nnfabrik_module, fabrikant_name
-    
-    ## model with checkpoint
-    # from nnfabrik.templates.checkpoint import TrainedModelChkptBase, my_checkpoint
-    # Checkpoint = my_checkpoint(nnfabrik_module)
-    # @schema
-    # class TrainedModelChkpt(TrainedModelChkptBase):
-    #     table_comment = "GPS trained models with checkpointing"
-    #     nnfabrik = nnfabrik_module
-    #     checkpoint_table = Checkpoint
 
 def clone_conn(conn):
     """
