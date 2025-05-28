@@ -25,7 +25,7 @@ pip install nnfabrik
 
 #### 2. Via GitHub:
 ```
-pip install git+https://github.com/ZeitgeberH/nnfabrik.git
+pip install git+https://github.com/reimerlab/nnfabrik.git
 ```
 
 ## :computer: Usage
