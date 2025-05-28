@@ -14,16 +14,7 @@ Training neural network models commonly involves the following steps:
 
 While that would fulfill the training procedure, a huge portion of time spent on finding the best model for your application is dedicated to hyper-parameter selection/optimization. Importantly, each of the above-mentioned steps may require their own specifications which effect the resulting model. For instance, whether to standardize the data, whether to use 2 layers or 20 layers, or whether to use Adam or SGD as the optimizer. This is where nnfabrik becomes very handy by keeping track of models trained for every unique combination of hyperparameters.
 
-## :gear: Installation
-
-You can use one of the following ways to install nnfabrik:
-
-#### 1. Using `pip`
-```
-pip install nnfabrik
-```
-
-#### 2. Via GitHub:
+## :gear: Installation via GitHub:
 ```
 pip install git+https://github.com/reimerlab/nnfabrik.git
 ```
