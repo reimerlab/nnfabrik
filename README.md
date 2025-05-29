@@ -52,7 +52,14 @@ We have pretty much covered the most important information about nnfabrik, and i
 
 ## :bulb: Example
 
-[Here](./examples/notebooks/nnfabrik_example.ipynb), you can find an example of the whole pipeline which might help to understand how different components work together to perform hyper-parameter search.
+ you can find examples of notebooks to domonstrate the whole pipelines which might help to understand how different components work together to perform hyper-parameter search.
+
+* [nnfabrik_example.ipynb](https://github.com/reimerlab/nnfabrik/blob/master/nnfabrik/examples/notebooks/nnfabrik_example.ipynb): Start from here as the basic usage.
+
+* [checkpoint_example.ipynb](https://github.com/reimerlab/nnfabrik/blob/master/nnfabrik/examples/notebooks/checkpoint_example.ipynb) Same as the first example, but with model checkpointing.
+
+* [mnist_nnfabrikOptuna.ipynb](https://github.com/reimerlab/nnfabrik/tree/master/nnfabrik/examples/notebooks/mnist_nnfabrikOptuna.ipynb) Same as the first example, but with hyperparameter tuning using Optuna
+
 
 ## :book: Documentation
 
