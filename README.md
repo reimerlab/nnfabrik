@@ -68,3 +68,17 @@ The documentation can be found [here](https://sinzlab.github.io/nnfabrik/). Plea
 ## :bug: Report bugs (or request features)
 
 In case you find a bug or would like to see some new features added to nnfabrik, please create an issue or contact any of the contributors.
+
+## Notes
+
+**nnfabrik** was originally developed in (Sinzlab)[https://github.com/sinzlab/nnfabrik].
+
+This repo is fork of the original repo with several extensions:
+
+1) Integrate Optuna as a build-in hyperparamter seach engine. See (example)[https://github.com/reimerlab/nnfabrik/tree/master/nnfabrik/examples/notebooks/mnist_nnfabrikOptuna.ipynb]. 
+
+2) No dependence on `nnfabrik_core` schema. 
+
+3) Several helper functions to reduce boilderplate code (see (utility/dj_helpers)[https://github.com/reimerlab/nnfabrik/blob/master/nnfabrik/utility/dj_helpers.py]). 
+
+4) Modification of Trained_Model schema to work better with Optuna (options to save additonal metrics in addition to **score**;  Optuna trial information; etc.)
